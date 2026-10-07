@@ -452,6 +452,41 @@ local function trimBucketsToCap(buckets, cap)
     end
 end
 
+local function characterStrings(char)
+    local strings = { char.name }
+    for _i, alias in ipairs(char.aliases or {}) do
+        strings[#strings + 1] = alias
+    end
+    return strings
+end
+
+local function nameStrings(entity)
+    return { entity.name }
+end
+
+local function entityMeta(buckets, entities, strings_of, cap)
+    local out = {}
+    for _i, entity in ipairs(entities) do
+        local name = entity.name
+        local marks = name and buckets[name]
+        if marks then
+            local counts, capped = {}, false
+            for _j, m in ipairs(marks) do
+                local r = m.r or 0
+                local n = (counts[r] or 0) + 1
+                counts[r] = n
+                if n >= cap then capped = true end
+            end
+            out[name] = {
+                sig = table.concat(strings_of(entity), "\1"),
+                cap = cap,
+                complete = not capped,
+            }
+        end
+    end
+    return out
+end
+
 local function slimBuckets(buckets)
     local out = {}
     for name, marks in pairs(buckets) do
@@ -724,9 +759,10 @@ function CharacterTracker:rebuildAllMarks(force)
 
     local t0 = os.clock()
     local fingerprint = self:_computeMarksFingerprint()
+    local cap = self:getMatchCap()
+    local cache, cached_fp, cached_cap
     if not force then
-        local cache = self:_loadMarksCache()
-        local cached_fp, cached_cap
+        cache = self:_loadMarksCache()
         if cache then
             cached_fp, cached_cap = cache.fingerprint, tonumber(cache.cap)
             local legacy_cap, rest = (cached_fp or ""):match("^fmt=2|cap=(%d+)(.*)$")
@@ -735,15 +771,14 @@ function CharacterTracker:rebuildAllMarks(force)
                 cached_cap = cached_cap or tonumber(legacy_cap)
             end
         end
-        local cap_now = self:getMatchCap()
-        if cache and cached_fp == fingerprint and cached_cap and cached_cap >= cap_now then
+        if cache and cached_fp == fingerprint and cached_cap and cached_cap >= cap then
             self.marks_by_charname = cache.characters or {}
             self.marks_by_placename = cache.places or {}
             self.marks_by_objname = cache.objects or {}
-            if cached_cap > cap_now then
-                trimBucketsToCap(self.marks_by_charname, cap_now)
-                trimBucketsToCap(self.marks_by_placename, cap_now)
-                trimBucketsToCap(self.marks_by_objname, cap_now)
+            if cached_cap > cap then
+                trimBucketsToCap(self.marks_by_charname, cap)
+                trimBucketsToCap(self.marks_by_placename, cap)
+                trimBucketsToCap(self.marks_by_objname, cap)
             end
             hydrateMarks(self.marks_by_charname, "character")
             hydrateMarks(self.marks_by_placename, "place")
@@ -754,53 +789,83 @@ function CharacterTracker:rebuildAllMarks(force)
             UIManager:setDirty(self.dialog, "ui")
             return
         end
-        logger.info("CharacterTracker: mark cache miss - scanning the book")
     end
 
-    local Trapper = require("ui/trapper")
-    local info = InfoMessage:new{ text = _("Indexing names…") }
-    UIManager:show(info)
-    UIManager:forceRePaint()
-    local cap = self:getMatchCap()
-    local completed, results = Trapper:dismissableRunInSubprocess(function()
-        local doc = self.ui.document
-        local per_char, per_place, per_object = {}, {}, {}
-        if self.mark_enabled then
-            for _i, char in ipairs(self.characters) do
-                local strings = { char.name }
-                for _j, alias in ipairs(char.aliases or {}) do
-                    table.insert(strings, alias)
-                end
-                per_char[char.name] = scanRuns(doc, strings, cap)
-            end
-        end
-        if self.place_mark_enabled then
-            for _i, place in ipairs(self.places) do
-                if place.name and place.name ~= "" then
-                    per_place[place.name] = scanRuns(doc, { place.name }, cap)
-                end
-            end
-        end
-        if self.object_mark_enabled then
-            for _i, entry in ipairs(self.compendium) do
-                if entry.name and entry.name ~= "" then
-                    per_object[entry.name] = scanRuns(doc, { entry.name }, cap)
+    local meta = {}
+    if cache and type(cache.meta) == "table" and (cached_fp or ""):sub(1, 5) == "fmt=2" then
+        meta = cache.meta
+    end
+
+    local kept = { characters = {}, places = {}, objects = {} }
+    local pending = { characters = {}, places = {}, objects = {} }
+
+    local function plan(kind, enabled, entities, strings_of, cached_marks)
+        if not enabled then return end
+        local cached_meta = meta[kind] or {}
+        for _i, entity in ipairs(entities) do
+            local name = entity.name
+            if name and name ~= "" then
+                local strings = strings_of(entity)
+                local m = cached_meta[name]
+                local marks = cached_marks and cached_marks[name]
+                local reusable = m and marks and m.sig == table.concat(strings, "\1")
+                    and (m.complete or (tonumber(m.cap) or 0) >= cap)
+                if reusable then
+                    kept[kind][name] = marks
+                else
+                    pending[kind][#pending[kind] + 1] = { name = name, strings = strings }
                 end
             end
         end
-        return { characters = per_char, places = per_place, objects = per_object }
-    end, info)
-    UIManager:close(info)
-    if completed and results then
-        self.marks_by_charname = results.characters or {}
-        self.marks_by_placename = results.places or {}
-        self.marks_by_objname = results.objects or {}
-        hydrateMarks(self.marks_by_charname, "character")
-        hydrateMarks(self.marks_by_placename, "place")
-        hydrateMarks(self.marks_by_objname, "object")
+    end
+    plan("characters", self.mark_enabled, self.characters, characterStrings, cache and cache.characters)
+    plan("places", self.place_mark_enabled, self.places, nameStrings, cache and cache.places)
+    plan("objects", self.object_mark_enabled, self.compendium, nameStrings, cache and cache.objects)
+
+    trimBucketsToCap(kept.characters, cap)
+    trimBucketsToCap(kept.places, cap)
+    trimBucketsToCap(kept.objects, cap)
+
+    local to_scan = #pending.characters + #pending.places + #pending.objects
+    local completed, results = true, nil
+    if to_scan > 0 then
+        logger.info(string.format("CharacterTracker: indexing %d name(s) not covered by the saved index", to_scan))
+        local Trapper = require("ui/trapper")
+        local info = InfoMessage:new{ text = _("Indexing names…") }
+        UIManager:show(info)
+        UIManager:forceRePaint()
+        completed, results = Trapper:dismissableRunInSubprocess(function()
+            local doc = self.ui.document
+            local out = { characters = {}, places = {}, objects = {} }
+            for kind, list in pairs(pending) do
+                for _i, item in ipairs(list) do
+                    out[kind][item.name] = scanRuns(doc, item.strings, cap)
+                end
+            end
+            return out
+        end, info)
+        UIManager:close(info)
+    end
+
+    if completed then
+        for kind, buckets in pairs(results or {}) do
+            for name, marks in pairs(buckets) do
+                kept[kind][name] = marks
+            end
+        end
+    end
+
+    self.marks_by_charname = kept.characters
+    self.marks_by_placename = kept.places
+    self.marks_by_objname = kept.objects
+    hydrateMarks(self.marks_by_charname, "character")
+    hydrateMarks(self.marks_by_placename, "place")
+    hydrateMarks(self.marks_by_objname, "object")
+
+    if completed then
         self._marks_complete = true
         self:_saveMarksCache(fingerprint)
-        logger.info(string.format("CharacterTracker: scanned the book in %.2fs (wall clock may differ - the scan runs in a subprocess)", os.clock() - t0))
+        logger.info(string.format("CharacterTracker: index updated in %.2fs (the scan itself runs in a subprocess, so wall clock may differ)", os.clock() - t0))
     end
     self:_indexMarks()
     UIManager:setDirty(self.dialog, "ui")
@@ -1299,6 +1364,11 @@ function CharacterTracker:_saveMarksCache(fingerprint)
     _writeJsonFile(path, {
         fingerprint = fingerprint or self:_computeMarksFingerprint(),
         cap = self:getMatchCap(),
+        meta = {
+            characters = entityMeta(self.marks_by_charname, self.characters, characterStrings, self:getMatchCap()),
+            places = entityMeta(self.marks_by_placename, self.places, nameStrings, self:getMatchCap()),
+            objects = entityMeta(self.marks_by_objname, self.compendium, nameStrings, self:getMatchCap()),
+        },
         characters = slimBuckets(self.marks_by_charname),
         places = slimBuckets(self.marks_by_placename),
         objects = slimBuckets(self.marks_by_objname),
@@ -2016,6 +2086,18 @@ function CharacterTracker:showRelationshipManager(character)
                     self._rel_dialog = nil
                     self:showRelationshipEntryActions(character, i)
                 end,
+                hold_callback = function()
+                    local target_char = self:getCharacterByName(rel.target)
+                    if target_char then
+                        UIManager:close(self._rel_dialog)
+                        self._rel_dialog = nil
+                        self:showCharacterDetail(target_char)
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = T(_("Character '%1' not found."), rel.target),
+                        })
+                    end
+                end,
             },
             {
                 text = "✕",
@@ -2529,16 +2611,55 @@ function CharacterTracker:buildRelationshipSummary(character)
         return parts
     end
 
+    local sentence = self:getRelationshipStyle() == "sentence"
+
+    local function sorted_union(outset, inset)
+        local keys = {}
+        for kk in pairs(outset) do keys[kk] = true end
+        for kk in pairs(inset) do keys[kk] = true end
+        local sorted = {}
+        for kk in pairs(keys) do table.insert(sorted, kk) end
+        table.sort(sorted, function(a, b)
+            return (getRelationshipLabel(a) or a):lower() < (getRelationshipLabel(b) or b):lower()
+        end)
+        return sorted
+    end
+
     local lines = {}
     for _i, k in ipairs(order) do
         local b = by_target[k]
-        local type_parts = merge_tokens(b.out_types, b.in_types, getRelationshipLabel)
         local sent_parts = merge_tokens(b.out_sent, b.in_sent, getSentimentLabel)
-        local line = b.name .. ": "
-        if #type_parts > 0 then
-            line = line .. table.concat(type_parts, ", ")
+        local line
+        if sentence then
+            local out_list, in_list = {}, {}
+            for _x, kk in ipairs(sorted_union(b.out_types, b.in_types)) do
+                local label = (getRelationshipLabel(kk) or kk):lower()
+                if b.out_types[kk] then
+                    table.insert(out_list, label)
+                else
+                    table.insert(in_list, label .. " " .. _("of") .. " " .. b.name)
+                end
+            end
+            local clauses = {}
+            if #out_list > 0 then
+                table.insert(clauses, b.name .. " " .. _("is their") .. " " .. table.concat(out_list, ", "))
+            end
+            if #in_list > 0 then
+                table.insert(clauses, table.concat(in_list, ", "))
+            end
+            if #clauses > 0 then
+                line = table.concat(clauses, "; ")
+            else
+                line = b.name .. ": " .. _("(linked)")
+            end
         else
-            line = line .. _("(linked)")
+            local type_parts = merge_tokens(b.out_types, b.in_types, getRelationshipLabel)
+            line = b.name .. ": "
+            if #type_parts > 0 then
+                line = line .. table.concat(type_parts, ", ")
+            else
+                line = line .. _("(linked)")
+            end
         end
         if #sent_parts > 0 then
             line = line .. "  —  " .. table.concat(sent_parts, ", ")
@@ -2546,6 +2667,156 @@ function CharacterTracker:buildRelationshipSummary(character)
         table.insert(lines, line)
     end
     return lines
+end
+
+function CharacterTracker:getRelationshipStyle()
+    if G_reader_settings ~= nil
+       and G_reader_settings:readSetting("character_tracker_relationship_style") == "sentence" then
+        return "sentence"
+    end
+    return "compact"
+end
+
+function CharacterTracker:showRelationshipStyleDialog()
+    local current = self:getRelationshipStyle()
+    local options = {
+        { key = "compact", label = _("Compact (e.g. Fred: son →)") },
+        { key = "sentence", label = _("Sentence (e.g. Fred is their son / son of Ted)") },
+    }
+    local buttons = {}
+    for _i, opt in ipairs(options) do
+        table.insert(buttons, {
+            {
+                text = (current == opt.key and "✓ " or "") .. opt.label,
+                callback = function()
+                    UIManager:close(self._rel_style_dialog)
+                    self._rel_style_dialog = nil
+                    if G_reader_settings then
+                        G_reader_settings:saveSetting("character_tracker_relationship_style", opt.key)
+                    end
+                end,
+            },
+        })
+    end
+    table.insert(buttons, {
+        {
+            text = _("Close"),
+            id = "close",
+            callback = function()
+                UIManager:close(self._rel_style_dialog)
+                self._rel_style_dialog = nil
+            end,
+        },
+    })
+    self._rel_style_dialog = ButtonDialog:new{
+        title = _("How relationships are written"),
+        buttons = buttons,
+    }
+    UIManager:show(self._rel_style_dialog)
+end
+
+function CharacterTracker:_relatedCharacters(character)
+    local related, seen = {}, {}
+    local function add(char)
+        if char and char ~= character and not seen[char] then
+            seen[char] = true
+            table.insert(related, char)
+        end
+    end
+    for _i, rel in ipairs(character.relationships or {}) do
+        add(self:getCharacterByName(rel.target))
+    end
+    local self_lower = character.name:lower()
+    for _i, char in ipairs(self.characters) do
+        for _j, rel in ipairs(char.relationships or {}) do
+            if rel.target and rel.target:lower() == self_lower then
+                add(char)
+                break
+            end
+        end
+    end
+    return related
+end
+
+function CharacterTracker:_onRelationshipHold(character, viewer, readonly, text)
+    local selected = ((text or ""):gsub("^[%s%p]+", ""):gsub("[%s%p]+$", ""))
+    local needle = selected:lower()
+
+    local function open(char)
+        if viewer then UIManager:close(viewer) end
+        if readonly then
+            self:showCharacterDetailReadOnly(char)
+        else
+            self:showCharacterDetail(char)
+        end
+    end
+
+    local exact
+    local candidates = {}
+    if needle ~= "" then
+        for _i, char in ipairs(self:_relatedCharacters(character)) do
+            local names = { char.name }
+            for _j, alias in ipairs(char.aliases or {}) do
+                table.insert(names, alias)
+            end
+            local matched = false
+            for _j, name in ipairs(names) do
+                local lowered = name:lower()
+                if lowered == needle then
+                    exact = char
+                    matched = true
+                    break
+                end
+                for word in lowered:gmatch("%S+") do
+                    if (word:gsub("^%p+", ""):gsub("%p+$", "")) == needle then
+                        matched = true
+                    end
+                end
+            end
+            if matched then table.insert(candidates, char) end
+        end
+    end
+
+    if exact then
+        open(exact)
+    elseif #candidates == 1 then
+        open(candidates[1])
+    elseif #candidates > 1 then
+        local buttons = {}
+        for _i, char in ipairs(candidates) do
+            table.insert(buttons, {
+                {
+                    text = char.name,
+                    callback = function()
+                        UIManager:close(self._rel_hold_dialog)
+                        self._rel_hold_dialog = nil
+                        open(char)
+                    end,
+                },
+            })
+        end
+        table.insert(buttons, {
+            {
+                text = _("Cancel"),
+                id = "close",
+                callback = function()
+                    UIManager:close(self._rel_hold_dialog)
+                    self._rel_hold_dialog = nil
+                end,
+            },
+        })
+        self._rel_hold_dialog = ButtonDialog:new{
+            title = _("Open which character?"),
+            buttons = buttons,
+        }
+        UIManager:show(self._rel_hold_dialog)
+    elseif text and text ~= "" then
+        pcall(function() Device.input.setClipboardText(text) end)
+        UIManager:show(InfoMessage:new{
+            text = _("Copied to clipboard."),
+            timeout = 1,
+        })
+    end
 end
 
 function CharacterTracker:getIncomingRelationships(character)
@@ -3998,7 +4269,6 @@ function CharacterTracker:buildCharacterDetailText(character)
         section(_("Occurrences"))
         if self.mark_enabled then
             local app = self:getCharacterAppearance(character)
-            table.insert(text_parts, "  " .. _("Occurrences") .. ": " .. app.count .. "\n")
             if not self:isIndexLimitWarningHidden() and self:_indexLimitReached(character) then
                 table.insert(text_parts, "  " .. T(_("(index limit of %1 reached - later mentions aren't underlined; raise it under \"Max matches per name\")"),
                     self:getMatchCap()) .. "\n")
@@ -4295,6 +4565,9 @@ function CharacterTracker:showCharacterDetail(character)
         width = math.floor(Device.screen:getWidth() * 0.9),
         height = math.floor(Device.screen:getHeight() * 0.85),
         buttons_table = rows,
+        text_selection_callback = function(text)
+            self:_onRelationshipHold(character, viewer, false, text)
+        end,
     }
     UIManager:show(viewer)
 end
@@ -4307,6 +4580,9 @@ function CharacterTracker:showCharacterDetailReadOnly(character)
         text = full_text,
         width = math.floor(Device.screen:getWidth() * 0.9),
         height = math.floor(Device.screen:getHeight() * 0.85),
+        text_selection_callback = function(text)
+            self:_onRelationshipHold(character, viewer, true, text)
+        end,
         buttons_table = {
             {
                 {
@@ -7693,6 +7969,13 @@ function CharacterTracker:addToMainMenu(menu_items)
                     if not G_reader_settings then return end
                     G_reader_settings:saveSetting("character_tracker_tap_opens_readonly",
                         not self:isTapOpensReadOnly())
+                end,
+            },
+            {
+                text = _("Relationship wording"),
+                keep_menu_open = false,
+                callback = function()
+                    self:showRelationshipStyleDialog()
                 end,
             },
             {
