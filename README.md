@@ -7,6 +7,7 @@ Character Tracker is a KOReader plugin that keeps of who and what appears in a s
 For people who rarely read long winded guides, these are the few things I think you should know.
 
 - Easiest way to access it while reading is to assign a gesture in the settings > Taps and gestures > Gesture manager > (gesture of your choice) > Reader
+- If you turn on underlined names you can press on any character or objects name to have their profile pop up
 - It tracks characters, places and any other miscellaneous topics in the compendium.
 - Installation
   - Place the entire folder in the plugins folder (KOreader>Plugins).
