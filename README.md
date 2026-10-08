@@ -8,6 +8,7 @@ For people who rarely read long winded guides, these are the few things I think 
 
 - Easiest way to access it while reading is to assign a gesture in the settings > Taps and gestures > Gesture manager > (gesture of your choice) > Reader
 - If you turn on underlined names you can press on any character or objects name while reading to have their profile pop up
+- turning on underlined names does cause a bit of delay (depending on book length and character and alias count) because the instances have ti be indexed, though it should take only a couple seconds
 - It tracks characters, places and any other miscellaneous topics in the compendium.
 - Installation
   - Place the entire folder in the plugins folder (KOreader>Plugins).
