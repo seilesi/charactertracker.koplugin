@@ -3,5 +3,5 @@ return {
     name = "charactertracker",
     fullname = _("Character Tracker"),
     description = _([[Track characters, add notes, and link highlights to characters while reading. Never forget who's who in a book again.]]),
-    version = "2.1.0",
+    version = "2.1.1",
 }

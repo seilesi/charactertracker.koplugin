@@ -105,11 +105,14 @@ local RELATIONSHIP_TYPES = {
     { key = "ward",     label = _("Ward"),     category = "family" },
     { key = "step_parent",   label = _("Step-parent"),   category = "family" },
     { key = "step_child",    label = _("Step-child"),    category = "family" },
+    { key = "step_parent_inclusive", label = _("Step-parent (inclusive)"), category = "family" },
+    { key = "step_child_inclusive",  label = _("Step-child (inclusive)"),  category = "family" },
     { key = "foster_parent", label = _("Foster parent"), category = "family" },
     { key = "foster_child",  label = _("Foster child"),  category = "family" },
     { key = "partner",  label = _("Partner"),  category = "family" },
     { key = "ex",       label = _("Ex-partner"), category = "family" },
     { key = "cousin",   label = _("Cousin"),   category = "family" },
+    { key = "step_sibling", label = _("Step-sibling"), category = "family" },
     { key = "spouse",   label = _("Spouse"),   category = "family" },
     { key = "ally",     label = _("Ally"),     category = "social" },
     { key = "rival",    label = _("Rival"),    category = "social" },
@@ -1392,6 +1395,7 @@ function CharacterTracker:loadFamilies()
         end
         if type(family.placeholders) ~= "table" then family.placeholders = {} end
         if type(family.couple_styles) ~= "table" then family.couple_styles = {} end
+        if type(family.pair_notes) ~= "table" then family.pair_notes = {} end
         if family.tree_kind ~= "social" then family.tree_kind = "family" end
         if type(family.social_ties) ~= "table" then family.social_ties = {} end
         if type(family.social_groups) ~= "table" then family.social_groups = {} end
@@ -1437,6 +1441,7 @@ end
 function CharacterTracker:saveFamilies()
     self._families_dirty = true
     self:_scheduleFlush()
+    self:_refreshFamilyList()
 end
 
 function CharacterTracker:getExportsDir()
@@ -3683,6 +3688,11 @@ function CharacterTracker:isShortTreeLabel()
         and LayoutSettings:isTrue("character_tracker_short_tree_label")
 end
 
+function CharacterTracker:isTreeBranchButtonsShown()
+    return G_reader_settings ~= nil
+        and LayoutSettings:isTrue("character_tracker_show_tree_branch_buttons")
+end
+
 function CharacterTracker:isReadOnlyTreeButtonHidden()
     return G_reader_settings ~= nil
         and LayoutSettings:isTrue("character_tracker_hide_readonly_tree_button")
@@ -4676,9 +4686,10 @@ end
 local FAMILY_ROMANTIC_RANK = { spouse = 4, partner = 3, lover = 2, ex = 1 }
 local FAMILY_BLOOD_TYPES = {
     father = true, mother = true, parent = true, son = true, daughter = true, child = true,
-    brother = true, sister = true, sibling = true, cousin = true,
+    brother = true, sister = true, sibling = true, cousin = true, step_sibling = true,
     adoptive_parent = true, adopted_child = true, guardian = true, ward = true,
     step_parent = true, step_child = true, foster_parent = true, foster_child = true,
+    step_parent_inclusive = true, step_child_inclusive = true,
 }
 
 function CharacterTracker:_familyOrigin(family, member)
@@ -11264,54 +11275,57 @@ end
 
 function CharacterTracker:showFamilyList()
     self._family_collapsed = self._family_collapsed or {}
-    local item_table = {}
-    table.insert(item_table, {
-        text = _("+ Add family"),
-        callback = function()
-            self:showAddFamilyDialog()
-        end,
-    })
-    local sections = {
-        { key = "family", label = _("Families"), list = {} },
-        { key = "social", label = _("Relationships"), list = {} },
-    }
-    for _i, family in ipairs(self.families) do
-        local section = family.tree_kind == "social" and sections[2] or sections[1]
-        table.insert(section.list, family)
-    end
     local menu_container
     local menu
-    for _i, section in ipairs(sections) do
-        if #section.list > 0 then
-            local collapsed = self._family_collapsed[section.key]
-            table.insert(item_table, {
-                text = (collapsed and "▸ " or "▾ ") .. section.label .. " (" .. #section.list .. ")",
-                callback = function()
-                    self._family_collapsed[section.key] = not collapsed or nil
-                    UIManager:close(menu_container)
-                    self:showFamilyList()
-                end,
-            })
-            if not collapsed then
-                for _j, family in ipairs(section.list) do
-                    local suffix = ""
-                    if family.members and #family.members > 0 then
-                        suffix = T(_("  ·  %1 member(s)"), #family.members)
+    local function buildItems()
+        local item_table = {}
+        table.insert(item_table, {
+            text = _("+ Add family"),
+            callback = function()
+                self:showAddFamilyDialog()
+            end,
+        })
+        local sections = {
+            { key = "family", label = _("Families"), list = {} },
+            { key = "social", label = _("Relationships"), list = {} },
+        }
+        for _i, family in ipairs(self.families) do
+            local section = family.tree_kind == "social" and sections[2] or sections[1]
+            table.insert(section.list, family)
+        end
+        for _i, section in ipairs(sections) do
+            if #section.list > 0 then
+                local collapsed = self._family_collapsed[section.key]
+                table.insert(item_table, {
+                    text = (collapsed and "▸ " or "▾ ") .. section.label .. " (" .. #section.list .. ")",
+                    callback = function()
+                        self._family_collapsed[section.key] = not collapsed or nil
+                        UIManager:close(menu_container)
+                        self:showFamilyList()
+                    end,
+                })
+                if not collapsed then
+                    for _j, family in ipairs(section.list) do
+                        local suffix = ""
+                        if family.members and #family.members > 0 then
+                            suffix = T(_("  ·  %1 member(s)"), #family.members)
+                        end
+                        table.insert(item_table, {
+                            text = "      " .. (family.name or _("(unnamed)")) .. suffix,
+                            callback = function()
+                                self:showFamilyDetail(family)
+                            end,
+                        })
                     end
-                    table.insert(item_table, {
-                        text = "      " .. (family.name or _("(unnamed)")) .. suffix,
-                        callback = function()
-                            self:showFamilyDetail(family)
-                        end,
-                    })
                 end
             end
         end
+        return item_table
     end
 
     menu = Menu:new{
         title = T(_("Families (%1)"), #self.families),
-        item_table = item_table,
+        item_table = buildItems(),
         is_borderless = true,
         is_popout = false,
         covers_fullscreen_widget = true,
@@ -11322,6 +11336,9 @@ function CharacterTracker:showFamilyList()
         end,
         close_callback = function()
             UIManager:close(menu_container)
+            if self._family_list and self._family_list.menu == menu then
+                self._family_list = nil
+            end
         end,
     }
     menu_container = CenterContainer:new{
@@ -11329,7 +11346,36 @@ function CharacterTracker:showFamilyList()
         menu,
     }
     menu.show_parent = menu_container
+    self._family_list = { container = menu_container, menu = menu, build = buildItems }
     UIManager:show(menu_container)
+end
+
+function CharacterTracker:_refreshFamilyList()
+    local list = self._family_list
+    if not list then return end
+    local open = false
+    for _i, w in ipairs(UIManager._window_stack) do
+        if w.widget == list.container then
+            open = true
+            break
+        end
+    end
+    if not open then
+        self._family_list = nil
+        return
+    end
+    if self._family_list_refresh_pending then return end
+    self._family_list_refresh_pending = true
+    UIManager:nextTick(function()
+        self._family_list_refresh_pending = false
+        local current = self._family_list
+        if not current or self._closed then return end
+        local items = current.build()
+        local perpage = current.menu.perpage or 14
+        local pages = math.max(1, math.ceil(#items / perpage))
+        local page = math.min(current.menu.page or 1, pages)
+        current.menu:switchItemTable(T(_("Families (%1)"), #self.families), items, (page - 1) * perpage + 1)
+    end)
 end
 
 function CharacterTracker:showFamilyTreePicker(read_only)
@@ -11626,6 +11672,8 @@ local PARENT_LINK_TYPES = {
     ward = { parent = "from", kind = "guardian" },
     step_parent = { parent = "to", kind = "step" },
     step_child = { parent = "from", kind = "step" },
+    step_parent_inclusive = { parent = "to", kind = "stepin" },
+    step_child_inclusive = { parent = "from", kind = "stepin" },
     foster_parent = { parent = "to", kind = "foster" },
     foster_child = { parent = "from", kind = "foster" },
 }
@@ -11636,6 +11684,54 @@ local PARTNER_TYPES = {
     lover = { style = "casual", rank = 2 },
     ex = { style = "former", rank = 1 },
 }
+
+local function childParentGroups(ps, kind_of, partners)
+    local by_kind, kind_order, stepin = {}, {}, {}
+    for _i, p in ipairs(ps) do
+        local kind = kind_of(p) or "bio"
+        if kind == "stepin" then
+            stepin[#stepin + 1] = p
+        else
+            if not by_kind[kind] then
+                by_kind[kind] = {}
+                kind_order[#kind_order + 1] = kind
+            end
+            table.insert(by_kind[kind], p)
+        end
+    end
+    local bios = by_kind.bio
+    local nb = bios and #bios or 0
+    local original = {}
+    for i = 1, nb do original[i] = bios[i] end
+    local extras, merged = {}, false
+    for _i, sp in ipairs(stepin) do
+        if nb == 0 then
+            if not bios then
+                bios = {}
+                by_kind.bio = bios
+                kind_order[#kind_order + 1] = "bio"
+            end
+            table.insert(bios, sp)
+        elseif nb == 1 and not merged then
+            table.insert(bios, sp)
+            merged = true
+        else
+            local mate = original[1]
+            for _j, b in ipairs(original) do
+                for _k, q in ipairs(partners and partners[sp] or {}) do
+                    if q == b then mate = b end
+                end
+            end
+            extras[#extras + 1] = { kind = "bio", parents = { mate, sp }, inclusive = sp }
+        end
+    end
+    local out = {}
+    for _i, kind in ipairs(kind_order) do
+        out[#out + 1] = { kind = kind, parents = by_kind[kind] }
+    end
+    for _i, extra in ipairs(extras) do out[#out + 1] = extra end
+    return out
+end
 
 local function buildFamilyGraph(family)
     local members = family.members or {}
@@ -11657,7 +11753,7 @@ local function buildFamilyGraph(family)
             order[#order + 1] = key
         end
     end
-    local parents, siblings, cousins = {}, {}, {}
+    local parents, siblings, cousins, stepsibs = {}, {}, {}, {}
     local partners, explicit, explicit_rank = {}, {}, {}
     local edge_kind = {}
     local function addPartner(a, b)
@@ -11686,11 +11782,12 @@ local function buildFamilyGraph(family)
     for _i, m in ipairs(members) do
         local child_key = lowerOrEmpty(m.name)
         local kinds = m.parent_kinds or {}
+        local hidden_parents = m.parents_hidden or {}
         for _j, p in ipairs(m.parents or {}) do
             local pk = lowerOrEmpty(p)
             local kind = kinds[pk]
             if kind == "" then kind = nil end
-            link(pk, child_key, kind)
+            if not hidden_parents[pk] then link(pk, child_key, kind) end
         end
         for _j, p in ipairs((family.extra_parents or {})[child_key] or {}) do
             link(lowerOrEmpty(p), child_key)
@@ -11699,8 +11796,9 @@ local function buildFamilyGraph(family)
     for _i, rel in ipairs(family.relations or {}) do
         local owner, target = lowerOrEmpty(rel.from), lowerOrEmpty(rel.to)
         local ty = rel.type
-        local plink = PARENT_LINK_TYPES[ty]
-        local ptype = PARTNER_TYPES[ty]
+        local shown = not rel.hidden_in_tree
+        local plink = shown and PARENT_LINK_TYPES[ty] or nil
+        local ptype = shown and PARTNER_TYPES[ty] or nil
         if plink then
             if plink.parent == "to" then
                 link(target, owner, plink.kind)
@@ -11714,9 +11812,14 @@ local function buildFamilyGraph(family)
                 explicit_rank[pair] = ptype.rank
             end
             addPartner(owner, target)
-        elseif (ty == "brother" or ty == "sister" or ty == "sibling") and plain[owner] and plain[target] then
+        elseif shown and (ty == "brother" or ty == "sister" or ty == "sibling") and plain[owner] and plain[target] then
             siblings[#siblings + 1] = { owner, target }
-        elseif ty == "cousin" and plain[owner] and plain[target] then
+        elseif shown and ty == "step_sibling" and plain[owner] and plain[target] then
+            stepsibs[owner] = stepsibs[owner] or {}
+            stepsibs[target] = stepsibs[target] or {}
+            table.insert(stepsibs[owner], target)
+            table.insert(stepsibs[target], owner)
+        elseif shown and ty == "cousin" and plain[owner] and plain[target] then
             cousins[owner] = cousins[owner] or {}
             cousins[target] = cousins[target] or {}
             table.insert(cousins[owner], target)
@@ -11772,17 +11875,11 @@ local function buildFamilyGraph(family)
         end
     end
     for _i, key in ipairs(order) do
-        local by_kind, kind_order = {}, {}
-        for _j, p in ipairs(parents[key] or {}) do
-            local kind = edge_kind[key] and edge_kind[key][p] or "bio"
-            if not by_kind[kind] then
-                by_kind[kind] = {}
-                kind_order[#kind_order + 1] = kind
-            end
-            table.insert(by_kind[kind], p)
-        end
-        for _j, kind in ipairs(kind_order) do
-            local ps = by_kind[kind]
+        local groups = childParentGroups(parents[key] or {}, function(p)
+            return edge_kind[key] and edge_kind[key][p]
+        end, partners)
+        for _j, grp in ipairs(groups) do
+            local ps = grp.parents
             if #ps >= 2 then addPartner(ps[1], ps[2]) end
         end
     end
@@ -11795,7 +11892,7 @@ local function buildFamilyGraph(family)
     end
     return {
         canon = canon, plain = plain, order = order, parents = parents,
-        children = children, cousins = cousins, partners = partners, explicit = explicit,
+        children = children, cousins = cousins, stepsibs = stepsibs, partners = partners, explicit = explicit,
         edge_kind = edge_kind, gender = gender,
     }
 end
@@ -11803,7 +11900,7 @@ end
 local function filterFamilyGraph(g, allowed)
     local out = {
         canon = g.canon, plain = g.plain, explicit = g.explicit, order = {},
-        parents = {}, children = {}, partners = {}, cousins = {}, edge_kind = {},
+        parents = {}, children = {}, partners = {}, cousins = {}, stepsibs = {}, edge_kind = {},
         focus = g.focus, hidden_counts = g.hidden_counts, relation_labels = g.relation_labels,
         gender = g.gender,
     }
@@ -11823,6 +11920,7 @@ local function filterFamilyGraph(g, allowed)
         out.children[key] = copyList(g.children, key)
         out.partners[key] = copyList(g.partners, key)
         out.cousins[key] = copyList(g.cousins, key)
+        out.stepsibs[key] = copyList(g.stepsibs or {}, key)
         if g.edge_kind[key] then
             for parent, kind in pairs(g.edge_kind[key]) do
                 if allowed[parent] then
@@ -11997,10 +12095,11 @@ local TREE_INVERSE_LABELS = {
     son = _("Parent"), daughter = _("Parent"), child = _("Parent"),
     brother = _("Sibling"), sister = _("Sibling"), sibling = _("Sibling"),
     spouse = _("Spouse"), partner = _("Partner"), lover = _("Lover"), ex = _("Ex-partner"),
-    cousin = _("Cousin"),
+    cousin = _("Cousin"), step_sibling = _("Step-sibling"),
     adoptive_parent = _("Adopted child"), adopted_child = _("Adoptive parent"),
     guardian = _("Ward"), ward = _("Guardian"),
     step_parent = _("Step-child"), step_child = _("Step-parent"),
+    step_parent_inclusive = _("Step-child (inclusive)"), step_child_inclusive = _("Step-parent (inclusive)"),
     foster_parent = _("Foster child"), foster_child = _("Foster parent"),
 }
 
@@ -12041,6 +12140,7 @@ local function treePathLabel(g, focus, key, path)
             if kind == "adopted" then return _("Adoptive parent") end
             if kind == "guardian" then return _("Guardian") end
             if kind == "step" then return _("Step-parent") end
+            if kind == "stepin" then return _("Step-parent (inclusive)") end
             if kind == "foster" then return _("Foster parent") end
             return _("Parent")
         end
@@ -12052,6 +12152,7 @@ local function treePathLabel(g, focus, key, path)
             if kind == "adopted" then return _("Adopted child") end
             if kind == "guardian" then return _("Ward") end
             if kind == "step" then return _("Step-child") end
+            if kind == "stepin" then return _("Step-child (inclusive)") end
             if kind == "foster" then return _("Foster child") end
             return _("Child")
         end
@@ -12067,8 +12168,8 @@ local function treePathLabel(g, focus, key, path)
                 for _j, q in ipairs(theirs) do
                     if p == q then
                         shared_any = true
-                        local step = (g.edge_kind[focus] and g.edge_kind[focus][p] == "step")
-                            or (g.edge_kind[key] and g.edge_kind[key][p] == "step")
+                        local step = (g.edge_kind[focus] and (g.edge_kind[focus][p] == "step" or g.edge_kind[focus][p] == "stepin"))
+                            or (g.edge_kind[key] and (g.edge_kind[key][p] == "step" or g.edge_kind[key][p] == "stepin"))
                         if not step then shared_bio = true end
                     end
                 end
@@ -12220,7 +12321,9 @@ local function treeRelationLabels(g, vf, focus)
         if key ~= focus then
             local label = direct[key]
             if not label and p == "P" then
-                label = TREE_PATH_PARTNER[g.explicit[coupleKey(focus, key)] or ""] or _("Partner")
+                local pair_style = vf and vf.couple_styles and vf.couple_styles[coupleKey(focus, key)]
+                if not pair_style or pair_style == "" then pair_style = g.explicit[coupleKey(focus, key)] or "" end
+                label = TREE_PATH_PARTNER[coupleBaseStyle(pair_style)] or _("Partner")
             end
             labels[key] = label or treePathLabel(g, focus, key, p) or other_direct[key]
         end
@@ -12351,6 +12454,15 @@ local function layoutFamilyTree(family, g, scale)
     local function has_parents(k)
         return g.parents[k] and #g.parents[k] > 0
     end
+    local function struct_parents(c)
+        local all = g.parents[c] or {}
+        local firm = {}
+        for _i, p in ipairs(all) do
+            if not (g.edge_kind[c] and g.edge_kind[c][p] == "step") then firm[#firm + 1] = p end
+        end
+        if #firm > 0 then return firm end
+        return all
+    end
     local adj = {}
     for _i, a in ipairs(g.order) do
         for _j, b in ipairs(g.partners[a] or {}) do
@@ -12417,13 +12529,94 @@ local function layoutFamilyTree(family, g, scale)
     end
     table.sort(chains, function(x, y) return x.first < y.first end)
 
+    local succ = {}
+    local function chainReaches(a, b, seen)
+        if a == b then return true end
+        seen = seen or {}
+        if seen[a] then return false end
+        seen[a] = true
+        for nxt in pairs(succ[a] or {}) do
+            if chainReaches(nxt, b, seen) then return true end
+        end
+        return false
+    end
+    local function chainLink(pc, cc)
+        if pc == cc or chainReaches(cc, pc) then return false end
+        succ[pc] = succ[pc] or {}
+        succ[pc][cc] = true
+        return true
+    end
+    local firm_edges, soft_edges = {}, {}
+    for _i, c in ipairs(g.order) do
+        for _j, p in ipairs(g.parents[c] or {}) do
+            local kind = g.edge_kind[c] and g.edge_kind[c][p]
+            local edge = { c = c, p = p, kind = kind }
+            if kind == "step" or kind == "stepin" then
+                soft_edges[#soft_edges + 1] = edge
+            else
+                firm_edges[#firm_edges + 1] = edge
+            end
+        end
+    end
+    local dropped_edges, flipped_edges = {}, {}
+    for _i, e in ipairs(firm_edges) do
+        if not chainLink(chain_of[e.p], chain_of[e.c]) then dropped_edges[#dropped_edges + 1] = e end
+    end
+    for _i, e in ipairs(soft_edges) do
+        if not chainLink(chain_of[e.p], chain_of[e.c]) then
+            if chainLink(chain_of[e.c], chain_of[e.p]) then
+                flipped_edges[#flipped_edges + 1] = e
+            else
+                dropped_edges[#dropped_edges + 1] = e
+            end
+        end
+    end
+    if #dropped_edges > 0 or #flipped_edges > 0 then
+        local fixed = {}
+        for k, v in pairs(g) do fixed[k] = v end
+        fixed.parents, fixed.children, fixed.edge_kind = {}, {}, {}
+        local function copyList(list)
+            local out = {}
+            for i, v in ipairs(list) do out[i] = v end
+            return out
+        end
+        for k, list in pairs(g.parents) do fixed.parents[k] = copyList(list) end
+        for k, list in pairs(g.children) do fixed.children[k] = copyList(list) end
+        for k, map in pairs(g.edge_kind) do
+            fixed.edge_kind[k] = {}
+            for kk, vv in pairs(map) do fixed.edge_kind[k][kk] = vv end
+        end
+        local function removeFrom(list, value)
+            for i = #list, 1, -1 do
+                if list[i] == value then table.remove(list, i) end
+            end
+        end
+        for _i, e in ipairs(dropped_edges) do
+            removeFrom(fixed.parents[e.c] or {}, e.p)
+            removeFrom(fixed.children[e.p] or {}, e.c)
+            if fixed.edge_kind[e.c] then fixed.edge_kind[e.c][e.p] = nil end
+        end
+        for _i, e in ipairs(flipped_edges) do
+            removeFrom(fixed.parents[e.c] or {}, e.p)
+            removeFrom(fixed.children[e.p] or {}, e.c)
+            if fixed.edge_kind[e.c] then fixed.edge_kind[e.c][e.p] = nil end
+            fixed.parents[e.p] = fixed.parents[e.p] or {}
+            fixed.children[e.c] = fixed.children[e.c] or {}
+            table.insert(fixed.parents[e.p], e.c)
+            table.insert(fixed.children[e.c], e.p)
+            fixed.edge_kind[e.p] = fixed.edge_kind[e.p] or {}
+            fixed.edge_kind[e.p][e.c] = e.kind
+        end
+        g = fixed
+    end
+
     local level = {}
     for _i, k in ipairs(g.order) do level[k] = 0 end
     local cap = #g.order
     for _pass = 1, cap + 2 do
         local changed = false
         for _i, c in ipairs(g.order) do
-            for _j, p in ipairs(g.parents[c] or {}) do
+            for _j, p in ipairs(struct_parents(c)) do
                 if level[c] < level[p] + 1 and level[p] < cap then
                     level[c] = level[p] + 1
                     changed = true
@@ -12450,7 +12643,7 @@ local function layoutFamilyTree(family, g, scale)
     for _i, B in ipairs(chains) do
         for _j, m in ipairs(B.members) do
             if not B.parent_chain then
-                for _k, p in ipairs(g.parents[m] or {}) do
+                for _k, p in ipairs(struct_parents(m)) do
                     local pc = chain_of[p]
                     if pc and pc ~= B and pc.level < B.level then
                         B.parent_chain = pc
@@ -12471,25 +12664,93 @@ local function layoutFamilyTree(family, g, scale)
     end
 
     local sub_w = {}
-    local function measure(B)
-        local total = 0
-        for i, C in ipairs(kids[B] or {}) do
-            measure(C)
-            total = total + sub_w[C] + (i > 1 and sibling_gap or 0)
+    local function kidAnchor(B, C)
+        for _i, m in ipairs(C.members) do
+            local chosen
+            local groups = childParentGroups(g.parents[m] or {}, function(p)
+                return g.edge_kind[m] and g.edge_kind[m][p]
+            end, g.partners)
+            for _j, grp in ipairs(groups) do
+                if grp.kind == "bio" then
+                    chosen = grp.parents
+                    break
+                end
+            end
+            if not chosen then chosen = struct_parents(m) end
+            local use = {}
+            for _j, p in ipairs(chosen) do
+                if chain_of[p] == B then use[#use + 1] = p end
+            end
+            if #use > 0 then
+                if #use == 2 and math.abs(B.pos[use[1]] - B.pos[use[2]]) == 1 then
+                    local a = B.pos[use[1]] < B.pos[use[2]] and use[1] or use[2]
+                    return B.offs[a] + by_key[a].w + couple_gap / 2
+                end
+                local sum = 0
+                for _j, p in ipairs(use) do sum = sum + B.offs[p] + by_key[p].w / 2 end
+                return sum / #use
+            end
         end
-        B.children_total = total
-        sub_w[B] = math.max(B.w, total)
+        return B.w / 2
+    end
+    local function measure(B)
+        B.offs = {}
+        local ox = 0
+        for _i, k in ipairs(B.members) do
+            B.offs[k] = ox
+            ox = ox + by_key[k].w + couple_gap
+        end
+        local list = kids[B] or {}
+        B.kid_left, B.chain_off = {}, 0
+        if #list == 0 then
+            sub_w[B] = B.w
+            return
+        end
+        local entries = {}
+        for i, C in ipairs(list) do
+            measure(C)
+            entries[i] = { C = C, anchor = kidAnchor(B, C), idx = i }
+        end
+        table.sort(entries, function(x, y)
+            if x.anchor ~= y.anchor then return x.anchor < y.anchor end
+            return x.idx < y.idx
+        end)
+        local clusters = {}
+        for _i, e in ipairs(entries) do
+            local last = clusters[#clusters]
+            if last and math.abs(last.anchor - e.anchor) < 1 then
+                table.insert(last.items, e.C)
+                last.w = last.w + sibling_gap + sub_w[e.C]
+            else
+                clusters[#clusters + 1] = { anchor = e.anchor, items = { e.C }, w = sub_w[e.C] }
+            end
+        end
+        local prev_right
+        local min_left, max_right = 0, B.w
+        for _i, cl in ipairs(clusters) do
+            local left = cl.anchor - cl.w / 2
+            if prev_right and left < prev_right + sibling_gap then left = prev_right + sibling_gap end
+            local x = left
+            for _j, C in ipairs(cl.items) do
+                B.kid_left[C] = x
+                x = x + sub_w[C] + sibling_gap
+            end
+            prev_right = left + cl.w
+            if left < min_left then min_left = left end
+            if prev_right > max_right then max_right = prev_right end
+        end
+        B.chain_off = -min_left
+        sub_w[B] = max_right - min_left
     end
     local function place(B, left)
-        local x = left + (sub_w[B] - B.w) / 2
+        local base = left + B.chain_off
+        local x = base
         for _i, k in ipairs(B.members) do
             by_key[k].x = x
             x = x + by_key[k].w + couple_gap
         end
-        local cx = left + (sub_w[B] - B.children_total) / 2
         for _i, C in ipairs(kids[B] or {}) do
-            place(C, cx)
-            cx = cx + sub_w[C] + sibling_gap
+            place(C, base + B.kid_left[C])
         end
     end
 
@@ -12681,17 +12942,13 @@ local function drawFamilyTree(L, style_of, canvas_w, canvas_h, hide_underline)
     for _i, c in ipairs(g.order) do
         local ps = g.parents[c]
         if ps and #ps > 0 then
-            local by_kind, kind_order = {}, {}
-            for _j, p in ipairs(ps) do
-                local kind = g.edge_kind[c] and g.edge_kind[c][p] or "bio"
-                if not by_kind[kind] then
-                    by_kind[kind] = {}
-                    kind_order[#kind_order + 1] = kind
-                end
-                table.insert(by_kind[kind], p)
-            end
-            for _j, kind in ipairs(kind_order) do
-                local ids = by_kind[kind]
+            local child_groups = childParentGroups(ps, function(p)
+                return g.edge_kind[c] and g.edge_kind[c][p]
+            end, g.partners)
+            for _j, cg in ipairs(child_groups) do
+                local kind = cg.kind
+                local ids = {}
+                for _k, id in ipairs(cg.parents) do ids[#ids + 1] = id end
                 table.sort(ids)
                 local gk = kind .. "\2" .. table.concat(ids, "\1")
                 if not group_map[gk] then
@@ -12699,11 +12956,29 @@ local function drawFamilyTree(L, style_of, canvas_w, canvas_h, hide_underline)
                     groups[#groups + 1] = group_map[gk]
                 end
                 table.insert(group_map[gk].children, c)
+                if cg.inclusive then
+                    group_map[gk].inclusive = group_map[gk].inclusive or {}
+                    group_map[gk].inclusive[c] = cg.inclusive
+                end
             end
         end
     end
 
     for _i, grp in ipairs(groups) do
+      local skip_group = false
+      if grp.kind == "step" then
+        local bottom, top = 0, math.huge
+        for _j, p in ipairs(grp.parents) do
+            local n = L.by_key[p]
+            if n.y + n.h > bottom then bottom = n.y + n.h end
+        end
+        for _j, c in ipairs(grp.children) do
+            local n = L.by_key[c]
+            if n.y < top then top = n.y end
+        end
+        skip_group = top <= bottom
+      end
+      if not skip_group then
         local pn = {}
         local p_bottom = 0
         for _j, p in ipairs(grp.parents) do
@@ -12776,6 +13051,16 @@ local function drawFamilyTree(L, style_of, canvas_w, canvas_h, hide_underline)
             local cxc = n.x + n.w / 2
             vline(cxc, bus_y, n.y, { kind = "child", parents = grp.parents, child = c, rel_kind = grp.kind }, vs)
             xs[#xs + 1] = cxc
+            local step_id = grp.inclusive and grp.inclusive[c]
+            if step_id and L.by_key[step_id] then
+                local ns = L.by_key[step_id]
+                local sx = ns.x + ns.w / 2
+                local lane = math.min(bus_y + L.px(10), math.floor((bus_y + n.y) / 2))
+                local step_info = { kind = "child", parents = { step_id }, child = c, rel_kind = "stepin" }
+                vline(sx, ns.y + ns.h, lane, step_info, "former")
+                hline(math.min(sx, cxc), math.max(sx, cxc), lane, "former")
+                addLine(math.min(sx, cxc), lane, math.max(sx, cxc), lane, step_info)
+            end
         end
         local lo, hi = math.huge, -math.huge
         for _j, x in ipairs(xs) do
@@ -12790,6 +13075,7 @@ local function drawFamilyTree(L, style_of, canvas_w, canvas_h, hide_underline)
             end
             addLine(lo, bus_y, hi, bus_y, info)
         end
+      end
     end
 
     local bracket_count = {}
@@ -12814,6 +13100,27 @@ local function drawFamilyTree(L, style_of, canvas_w, canvas_h, hide_underline)
                     marriage_symbol(style, (ax + bx) / 2, by, false)
                     addLine(ax, by, bx, by, pair_info)
                 end
+            end
+        end
+    end
+
+    local stepsib_done = {}
+    for _i, a in ipairs(g.order) do
+        for _j, b in ipairs(g.stepsibs and g.stepsibs[a] or {}) do
+            local pair = coupleKey(a, b)
+            if not stepsib_done[pair] and L.by_key[a] and L.by_key[b] then
+                stepsib_done[pair] = true
+                local na, nb = L.by_key[a], L.by_key[b]
+                if na.x > nb.x then na, nb = nb, na end
+                local row = math.floor(math.max(na.y + na.h, nb.y + nb.h))
+                bracket_count[row] = (bracket_count[row] or 0) + 1
+                local by = row + L.px(8) * bracket_count[row] + L.px(4)
+                local ax, bx = na.x + na.w / 2, nb.x + nb.w / 2
+                local pair_info = { kind = "stepsib", a = a, b = b }
+                vline(ax, na.y + na.h, by, pair_info, "casual")
+                vline(bx, nb.y + nb.h, by, pair_info, "casual")
+                hline(ax, bx, by, "casual")
+                addLine(ax, by, bx, by, pair_info)
             end
         end
     end
@@ -15989,7 +16296,7 @@ function CharacterTracker:buildCombinedFamily(family)
                         present[id] = true
                         table.insert(vf.relations, {
                             from = char.name, to = r.target, type = r.type, sentiment = r.sentiment or "",
-                            notes = {}, secrets = {},
+                            notes = {}, secrets = {}, hidden_in_tree = r.hidden_in_tree or nil,
                         })
                     end
                 end
@@ -16157,7 +16464,44 @@ function CharacterTracker:_familyPairText(family, g, ka, kb)
             end
         end
     end
+    local real = family.real or family
+    local pair_entry = type(real.pair_notes) == "table" and real.pair_notes[coupleKey(ka, kb)] or nil
+    if pair_entry and ((pair_entry.notes and #pair_entry.notes or 0) + (pair_entry.secrets and #pair_entry.secrets or 0)) > 0 then
+        table.insert(lines, "• " .. _("Relationship notes"))
+        for _k, note in ipairs(pair_entry.notes or {}) do
+            table.insert(lines, "    – " .. note)
+        end
+        for _k, secret in ipairs(pair_entry.secrets or {}) do
+            table.insert(lines, "    – " .. _("Secret") .. ": " .. secret)
+        end
+    end
     return lines
+end
+
+function CharacterTracker:_familyPairNoteCount(family, ka, kb)
+    local real = family.real or family
+    local entry = type(real.pair_notes) == "table" and real.pair_notes[coupleKey(ka, kb)] or nil
+    if not entry then return 0 end
+    return (entry.notes and #entry.notes or 0) + (entry.secrets and #entry.secrets or 0)
+end
+
+function CharacterTracker:showFamilyPairNotes(family, g, ka, kb, on_close)
+    local real = family.real or family
+    if type(real.pair_notes) ~= "table" then real.pair_notes = {} end
+    local key = coupleKey(ka, kb)
+    local entry = real.pair_notes[key]
+    if type(entry) ~= "table" then
+        entry = { notes = {}, secrets = {} }
+        real.pair_notes[key] = entry
+    end
+    local label = T(_("Relationship notes — %1 & %2"), g.canon[ka] or ka, g.canon[kb] or kb)
+    self:showEntryNotesSecrets(real, entry, label, function()
+        if #(entry.notes or {}) == 0 and #(entry.secrets or {}) == 0 then
+            real.pair_notes[key] = nil
+        end
+        self:saveFamilies()
+        if on_close then on_close() end
+    end, function() self:saveFamilies() end)
 end
 
 function CharacterTracker:showFamilyTreeLineInfo(family, view, info)
@@ -16196,6 +16540,26 @@ function CharacterTracker:showFamilyTreeLineInfo(family, view, info)
             end) },
         })
     end
+    local function delete_row(ka, kb, label, category)
+        if not view.editing then return end
+        table.insert(buttons, {
+            { text = label or _("Delete or hide relationship"), callback = close_and(function()
+                self:showFamilyPairRelationshipDialog(view, ka, kb, category, true)
+            end) },
+        })
+    end
+    local function note_row(ka, kb, label)
+        if not (g.plain[ka] and g.plain[kb]) then return end
+        local count = self:_familyPairNoteCount(vf, ka, kb)
+        table.insert(buttons, {
+            { text = (label or _("Relationship notes")) .. (count > 0 and (" (" .. count .. ")") or ""),
+              callback = close_and(function()
+                self:showFamilyPairNotes(vf, g, ka, kb, function()
+                    self:showFamilyTreeLineInfo(family, view, info)
+                end)
+            end) },
+        })
+    end
     local function common_children(ka, kb)
         local out = {}
         for _i, c in ipairs(g.children[ka] or {}) do
@@ -16220,8 +16584,21 @@ function CharacterTracker:showFamilyTreeLineInfo(family, view, info)
             table.insert(lines, "")
             table.insert(lines, _("Children together") .. ": " .. table.concat(kids, ", "))
         end
+        note_row(info.a, info.b)
         style_row(info.a, info.b)
         rel_row(info.a, info.b, nil, "couple")
+        delete_row(info.a, info.b, nil, "couple")
+    elseif info.kind == "stepsib" then
+        title = name(info.a) .. " ~ " .. name(info.b)
+        table.insert(lines, T(_("%1 and %2 are step-siblings."), name(info.a), name(info.b)))
+        local pair = self:_familyPairText(vf, g, info.a, info.b)
+        if #pair > 0 then
+            table.insert(lines, "")
+            for _i, l in ipairs(pair) do table.insert(lines, l) end
+        end
+        note_row(info.a, info.b)
+        rel_row(info.a, info.b, nil, nil)
+        delete_row(info.a, info.b, nil, nil)
     elseif info.kind == "child" then
         local parent_names = {}
         for _i, p in ipairs(info.parents) do table.insert(parent_names, name(p)) end
@@ -16231,7 +16608,10 @@ function CharacterTracker:showFamilyTreeLineInfo(family, view, info)
             step = _("step-parent"), foster = _("foster parent"),
         }
         for _i, p in ipairs(info.parents) do
-            if info.rel_kind and kind_text[info.rel_kind] then
+            local edge = g.edge_kind[info.child] and g.edge_kind[info.child][p]
+            if edge == "stepin" then
+                table.insert(lines, T(_("%1 is the step-parent of %2 (inclusive)."), name(p), name(info.child)))
+            elseif info.rel_kind and kind_text[info.rel_kind] then
                 table.insert(lines, T(_("%1 is the %2 of %3."), name(p), kind_text[info.rel_kind], name(info.child)))
             else
                 table.insert(lines, T(_("%1 is a parent of %2."), name(p), name(info.child)))
@@ -16242,7 +16622,13 @@ function CharacterTracker:showFamilyTreeLineInfo(family, view, info)
             table.insert(lines, "")
         end
         for _i, p in ipairs(info.parents) do
+            note_row(p, info.child, #info.parents > 1 and T(_("Notes: %1 & %2"), name(p), name(info.child)) or nil)
+        end
+        for _i, p in ipairs(info.parents) do
             rel_row(p, info.child, #info.parents > 1 and T(_("Change relationship with %1"), name(p)) or nil, "parent")
+        end
+        for _i, p in ipairs(info.parents) do
+            delete_row(p, info.child, T(_("Delete or hide relationship with %1"), name(p)), "parent")
         end
     else
         local parent_names, child_names = {}, {}
@@ -16257,8 +16643,15 @@ function CharacterTracker:showFamilyTreeLineInfo(family, view, info)
             for _i, l in ipairs(self:_familyPairText(vf, g, info.parents[1], info.parents[2])) do
                 table.insert(lines, l)
             end
+            note_row(info.parents[1], info.parents[2])
             style_row(info.parents[1], info.parents[2])
             rel_row(info.parents[1], info.parents[2], nil, "couple")
+            delete_row(info.parents[1], info.parents[2], nil, "couple")
+        end
+        for _i, c in ipairs(info.children or {}) do
+            for _j, p in ipairs(info.parents) do
+                delete_row(p, c, T(_("Delete or hide %1 → %2"), name(p), name(c)), "parent")
+            end
         end
     end
     local closing = {}
@@ -16274,7 +16667,7 @@ function CharacterTracker:showFamilyTreeLineInfo(family, view, info)
     UIManager:show(viewer)
 end
 
-function CharacterTracker:showFamilyPairRelationshipDialog(view, ka, kb, category)
+function CharacterTracker:showFamilyPairRelationshipDialog(view, ka, kb, category, delete_mode)
     local g = view.graph
     local family = view.family
     if not (g.plain[ka] and g.plain[kb]) then
@@ -16289,7 +16682,7 @@ function CharacterTracker:showFamilyPairRelationshipDialog(view, ka, kb, categor
     end
     local function again()
         refresh()
-        self:showFamilyPairRelationshipDialog(view, ka, kb, category)
+        self:showFamilyPairRelationshipDialog(view, ka, kb, category, delete_mode)
     end
     local function matches(rel_type)
         if category == "couple" then return PARTNER_TYPES[rel_type] ~= nil end
@@ -16358,6 +16751,12 @@ function CharacterTracker:showFamilyPairRelationshipDialog(view, ka, kb, categor
         if link.member.parent_kinds then
             link.member.parent_kinds[lowerOrEmpty(link.parent)] = nil
         end
+        if link.member.parents_hidden then
+            link.member.parents_hidden[lowerOrEmpty(link.parent)] = nil
+        end
+    end
+    local function showBox(hidden)
+        return (hidden and "☐ " or "☑ ") .. _("Show")
     end
     local function removeEverything()
         for i = #records, 1, -1 do
@@ -16373,6 +16772,14 @@ function CharacterTracker:showFamilyPairRelationshipDialog(view, ka, kb, categor
         self:saveData()
         self:_cleanupLinkedMembers()
     end
+    if delete_mode and #records == 0 and #parent_links == 0 and #char_links == 0 then
+        UIManager:show(InfoMessage:new{
+            text = T(_("No relationship is recorded between %1 and %2."), a, b),
+            timeout = 2,
+        })
+        refresh()
+        return
+    end
     if #records == 0 and #parent_links == 0 and #char_links == 0 then
         UIManager:show(InfoMessage:new{
             text = T(_("No relationship is recorded between %1 and %2 yet. Choose one."), a, b),
@@ -16382,11 +16789,29 @@ function CharacterTracker:showFamilyPairRelationshipDialog(view, ka, kb, categor
         return
     end
     local buttons = {}
+    local function confirmDeleteRecord(record)
+        UIManager:show(ConfirmBox:new{
+            text = T(_("Delete this relationship?\n\n%1"), describeInnerRelation(record.rel)),
+            ok_text = _("Delete"),
+            ok_callback = function()
+                self:_unsyncRelationFromCharacter(record.rel)
+                table.remove(record.family.relations, record.index)
+                self:saveFamilies()
+                self:_cleanupLinkedMembers()
+                again()
+            end,
+            cancel_callback = again,
+        })
+    end
     for _i, record in ipairs(records) do
         table.insert(buttons, {
             {
-                text = shorten(describeInnerRelation(record.rel), 40),
+                text = shorten(describeInnerRelation(record.rel), 30),
                 callback = close_and(function()
+                    if delete_mode then
+                        confirmDeleteRecord(record)
+                        return
+                    end
                     self:_showChoice(T(_("'%1' is ___ of '%2'"), record.rel.to or "?", record.rel.from or "?"),
                         relationChoices(), function(value)
                             self:_commitFamilyRelation(record.family, record.rel.from, record.rel.to,
@@ -16396,29 +16821,34 @@ function CharacterTracker:showFamilyPairRelationshipDialog(view, ka, kb, categor
                 end),
             },
             {
-                text = "✕",
+                text = showBox(record.rel.hidden_in_tree),
                 callback = close_and(function()
-                    UIManager:show(ConfirmBox:new{
-                        text = T(_("Delete this relationship?\n\n%1"), describeInnerRelation(record.rel)),
-                        ok_text = _("Delete"),
-                        ok_callback = function()
-                            self:_unsyncRelationFromCharacter(record.rel)
-                            table.remove(record.family.relations, record.index)
-                            self:saveFamilies()
-                            self:_cleanupLinkedMembers()
-                            again()
-                        end,
-                        cancel_callback = again,
-                    })
+                    record.rel.hidden_in_tree = (not record.rel.hidden_in_tree) or nil
+                    self:saveFamilies()
+                    again()
                 end),
+            },
+            {
+                text = "✕",
+                callback = close_and(function() confirmDeleteRecord(record) end),
             },
         })
     end
     for _i, link in ipairs(parent_links) do
+        local pkey = lowerOrEmpty(link.parent)
         table.insert(buttons, {
             {
-                text = shorten(T(_("Parents list: %1 is a parent of %2"), link.parent, link.member.name), 40),
+                text = shorten(T(_("Parents list: %1 is a parent of %2"), link.parent, link.member.name), 30),
                 callback = function() end,
+            },
+            {
+                text = showBox(link.member.parents_hidden and link.member.parents_hidden[pkey]),
+                callback = close_and(function()
+                    if type(link.member.parents_hidden) ~= "table" then link.member.parents_hidden = {} end
+                    link.member.parents_hidden[pkey] = (not link.member.parents_hidden[pkey]) or nil
+                    self:saveFamilies()
+                    again()
+                end),
             },
             {
                 text = "✕",
@@ -16435,8 +16865,16 @@ function CharacterTracker:showFamilyPairRelationshipDialog(view, ka, kb, categor
         table.insert(buttons, {
             {
                 text = shorten(T(_("Character list: %1 → %2 (%3)"), link.char.name, link.rel.target,
-                    getRelationshipLabel(link.rel.type)), 40),
+                    getRelationshipLabel(link.rel.type)), 30),
                 callback = function() end,
+            },
+            {
+                text = showBox(link.rel.hidden_in_tree),
+                callback = close_and(function()
+                    link.rel.hidden_in_tree = (not link.rel.hidden_in_tree) or nil
+                    self:saveData()
+                    again()
+                end),
             },
             {
                 text = "✕",
@@ -16466,9 +16904,10 @@ function CharacterTracker:showFamilyPairRelationshipDialog(view, ka, kb, categor
         { text = _("Done"), id = "close", callback = close_and(refresh) },
     })
     dialog = ButtonDialog:new{
-        title = T(category == "parent" and _("Parent link — %1 and %2\n(tap to change it, ✕ to remove it)")
-            or (category == "couple" and _("Couple link — %1 and %2\n(tap to change it, ✕ to remove it)")
-            or _("Relationship — %1 and %2\n(tap one to change it, ✕ to remove it)")), a, b),
+        title = delete_mode and T(_("Delete relationships — %1 and %2\n(tap one or ✕ to delete it, ☑ to show or hide it in the tree)"), a, b)
+            or T(category == "parent" and _("Parent link — %1 and %2\n(tap to change it, ✕ to remove it, ☑ to show or hide it in the tree)")
+            or (category == "couple" and _("Couple link — %1 and %2\n(tap to change it, ✕ to remove it, ☑ to show or hide it in the tree)")
+            or _("Relationship — %1 and %2\n(tap one to change it, ✕ to remove it, ☑ to show or hide it in the tree)")), a, b),
         buttons = buttons,
     }
     UIManager:show(dialog)
@@ -16505,8 +16944,19 @@ function CharacterTracker:showFamilyTreePersonInfo(family, view, key)
         if g.parents[key] and #g.parents[key] > 0 then
             add("parents", _("Parents"), _("Parents") .. ": " .. table.concat(names_of(g.parents[key]), ", "))
         end
-        if g.partners[key] and #g.partners[key] > 0 then
-            add("partners", _("Partners"), _("Partners") .. ": " .. table.concat(names_of(g.partners[key]), ", "))
+        local current_partners, former_partners = {}, {}
+        for _i, other in ipairs(g.partners[key] or {}) do
+            if coupleBaseStyle(self:getCoupleStyle(vf, g, key, other)) == "former" then
+                table.insert(former_partners, other)
+            else
+                table.insert(current_partners, other)
+            end
+        end
+        if #current_partners > 0 then
+            add("partners", _("Partners"), _("Partners") .. ": " .. table.concat(names_of(current_partners), ", "))
+        end
+        if #former_partners > 0 then
+            add("exes", _("Ex-partners"), _("Ex-partners") .. ": " .. table.concat(names_of(former_partners), ", "))
         end
         if g.children[key] and #g.children[key] > 0 then
             add("children", _("Children"), _("Children") .. ": " .. table.concat(names_of(g.children[key]), ", "))
@@ -16576,6 +17026,13 @@ function CharacterTracker:showFamilyTreePersonInfo(family, view, key)
                     end
                 end) },
             })
+            if family.tree_kind ~= "social" then
+                table.insert(buttons, {
+                    { text = _("Delete or hide relationships"), callback = close_and(function()
+                        self:showFamilyTreePersonRelationshipPicker(view, key)
+                    end) },
+                })
+            end
             table.insert(buttons, {
                 { text = _("Set gender"), callback = close_and(function()
                     self:showFamilyGenderDialog(member, function()
@@ -16618,14 +17075,16 @@ function CharacterTracker:showFamilyTreePersonInfo(family, view, key)
                 view:setFocus(view.focus ~= key and key or nil)
             end) },
         })
-        table.insert(buttons, {
-            { text = view.hidden_down[key] and _("Show below") or _("Hide below"), callback = close_and(function()
-                view:toggleBranch(key, "down")
-            end) },
-            { text = view.hidden_up[key] and _("Show above") or _("Hide above"), callback = close_and(function()
-                view:toggleBranch(key, "up")
-            end) },
-        })
+        if self:isTreeBranchButtonsShown() then
+            table.insert(buttons, {
+                { text = view.hidden_down[key] and _("Show below") or _("Hide below"), callback = close_and(function()
+                    view:toggleBranch(key, "down")
+                end) },
+                { text = view.hidden_up[key] and _("Show above") or _("Hide above"), callback = close_and(function()
+                    view:toggleBranch(key, "up")
+                end) },
+            })
+        end
     end
     table.insert(buttons, {
         { text = _("Close"), id = "close", callback = close_and(function() end) },
@@ -16638,6 +17097,46 @@ function CharacterTracker:showFamilyTreePersonInfo(family, view, key)
         buttons_table = buttons,
     }
     UIManager:show(viewer)
+end
+
+function CharacterTracker:showFamilyTreePersonRelationshipPicker(view, key)
+    local g = view.graph
+    local others, seen = {}, {}
+    local function add(k)
+        if k and k ~= "" and k ~= key and g.plain[k] and not seen[k] then
+            seen[k] = true
+            table.insert(others, k)
+        end
+    end
+    for _i, fam in ipairs(self.families or {}) do
+        for _j, rel in ipairs(fam.relations or {}) do
+            local from, to = lowerOrEmpty(rel.from), lowerOrEmpty(rel.to)
+            if from == key then add(to) elseif to == key then add(from) end
+        end
+        for _j, m in ipairs(fam.members or {}) do
+            local mk = lowerOrEmpty(m.name)
+            for _k, p in ipairs(m.parents or {}) do
+                local pk = lowerOrEmpty(p)
+                if mk == key then add(pk) elseif pk == key then add(mk) end
+            end
+        end
+    end
+    for _i, k in ipairs(g.parents[key] or {}) do add(k) end
+    for _i, k in ipairs(g.children[key] or {}) do add(k) end
+    for _i, k in ipairs(g.partners[key] or {}) do add(k) end
+    local choices = {}
+    for _i, k in ipairs(others) do
+        table.insert(choices, { label = g.canon[k], value = k })
+    end
+    if #choices == 0 then
+        UIManager:show(InfoMessage:new{
+            text = T(_("%1 has no relationships to delete."), g.canon[key] or "?"), timeout = 2,
+        })
+        return
+    end
+    self:_showChoice(T(_("Delete or hide a relationship of %1 with:"), g.canon[key]), choices, function(other)
+        self:showFamilyPairRelationshipDialog(view, key, other, nil, true)
+    end)
 end
 
 function CharacterTracker:showFamilyCoupleStyleDialog(family, g, ka, kb, on_done)
@@ -16876,7 +17375,8 @@ function CharacterTracker:showFamilyLinkDialog(family, on_done)
         father = true, mother = true, parent = true, son = true, daughter = true, child = true,
         adoptive_parent = true, adopted_child = true, guardian = true, ward = true,
         step_parent = true, step_child = true, foster_parent = true, foster_child = true,
-        brother = true, sister = true, sibling = true, cousin = true,
+        step_parent_inclusive = true, step_child_inclusive = true,
+        brother = true, sister = true, sibling = true, cousin = true, step_sibling = true,
     }
     local type_choices = {}
     for _i, rt in ipairs(RELATIONSHIP_TYPES) do
@@ -17707,8 +18207,17 @@ end
 
 function CharacterTracker:showFamilyDetail(family)
     self._tree_return_view = nil
+    self:_disarmDetailReturn()
     local viewer
     local function reopen() self:showFamilyDetail(family) end
+    local function arm()
+        self:_armDetailReturn(family, reopen, function()
+            for _i, f in ipairs(self.families) do
+                if f == family or (family.id and f.id == family.id) then return true end
+            end
+            return false
+        end)
+    end
     local actions = {}
     for _i, def in ipairs(self:_familyActions(family, reopen)) do actions[def.key] = def end
     local order, placement = self:getFamilyButtonLayout()
@@ -17724,12 +18233,14 @@ function CharacterTracker:showFamilyDetail(family)
         if placement[key] == "main" and actions[key] and familyActionApplies(key, family) then
             add({ text = actions[key].label, callback = function()
                 UIManager:close(viewer)
+                arm()
                 actions[key].run()
             end })
         end
     end
     add({ text = _("More"), callback = function()
         UIManager:close(viewer)
+        arm()
         self:showFamilyMoreMenu(family)
     end })
     if #row > 0 then table.insert(rows, row) end
@@ -19015,6 +19526,7 @@ function CharacterTracker:showFamilyMemberParents(family, index)
         local kind = member.parent_kinds and member.parent_kinds[lowerOrEmpty(parent)] or nil
         local kind_labels = {
             adopted = _("adopted"), guardian = _("guardian"), step = _("step"), foster = _("foster"),
+            stepin = _("step, inclusive"),
         }
         table.insert(buttons, {
             {
@@ -19028,6 +19540,7 @@ function CharacterTracker:showFamilyMemberParents(family, index)
                         { label = _("Adopted"), value = "adopted" },
                         { label = _("Guardian"), value = "guardian" },
                         { label = _("Step-parent"), value = "step" },
+                        { label = _("Step-parent (inclusive)"), value = "stepin" },
                         { label = _("Foster parent"), value = "foster" },
                     }
                     if placeholder then
@@ -19529,6 +20042,9 @@ function CharacterTracker:deleteFamily(family)
                 text = T(_("Deleted family '%1'."), family.name),
                 timeout = 2,
             })
+        end,
+        cancel_callback = function()
+            self:showFamilyDetail(family)
         end,
     })
 end
@@ -20309,7 +20825,7 @@ function CharacterTracker:_disarmDetailReturn()
     self._detail_return = nil
 end
 
-function CharacterTracker:_armDetailReturn(character, reopen)
+function CharacterTracker:_armDetailReturn(character, reopen, exists)
     local stack = UIManager._window_stack
     if not stack or not reopen then return end
     local state = { character = character, reopen = reopen, baseline = #stack, idle = 0 }
@@ -20323,7 +20839,9 @@ function CharacterTracker:_armDetailReturn(character, reopen)
         end
         if state.idle >= 2 then
             self._detail_return = nil
-            if self:getCharacterIndex(character) then reopen() end
+            local still_there
+            if exists then still_there = exists() else still_there = self:getCharacterIndex(character) end
+            if still_there then reopen() end
             return
         end
         UIManager:scheduleIn(DETAIL_RETURN_POLL, poll)
@@ -20338,7 +20856,7 @@ local LAYOUT_BOOL_KEYS = {
     "character_tracker_hide_belongings", "character_tracker_hide_last_seen",
     "character_tracker_hide_family", "character_tracker_hide_readonly_tree_button",
     "character_tracker_short_tree_label", "character_tracker_hide_readonly_edit_button",
-    "character_tracker_hide_counts",
+    "character_tracker_hide_counts", "character_tracker_show_tree_branch_buttons",
 }
 for _i, kind in ipairs({ "character", "highlight", "topic", "place", "compendium",
         "family", "appearance", "timeline", "family_excerpt" }) do
@@ -21026,6 +21544,18 @@ function CharacterTracker:addToMainMenu(menu_items)
     })
 
     table.insert(menu_items.character_tracker.sub_item_table, {
+        text = _("Show \"Hide above / Hide below\" buttons (family tree)"),
+        checked_func = function()
+            return self:isTreeBranchButtonsShown()
+        end,
+        callback = function()
+            if not G_reader_settings then return end
+            LayoutSettings:saveSetting("character_tracker_show_tree_branch_buttons",
+                not self:isTreeBranchButtonsShown())
+        end,
+    })
+
+    table.insert(menu_items.character_tracker.sub_item_table, {
         text = _("Hide edit button (read-only character page)"),
         checked_func = function()
             return self:isReadOnlyEditButtonHidden()
@@ -21250,6 +21780,7 @@ function CharacterTracker:addToMainMenu(menu_items)
             texts = {
                 _("Sync relationship tree ties with character list"),
                 _("Show family ties in relationship trees"), _("Label ties in relationship trees"),
+                _("Show \"Hide above / Hide below\" buttons (family tree)"),
             },
         },
         { title = _("Timeline"), texts = { _("Hide shot button in timeline") } },
