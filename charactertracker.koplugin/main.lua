@@ -5864,6 +5864,22 @@ function CharacterTracker:onAssignHighlightToCharacter(selected)
         })
     end
 
+    if #self.places > 0 and not self:isSelectionOptionHidden("place_excerpt") then
+        table.insert(buttons, {
+            { text = _("Add selection to a place…"), callback = choose(function()
+                self:showAssignPlaceExcerpt(trimmed, self:_selectionPage(selected))
+            end) },
+        })
+    end
+
+    if #self.compendium > 0 and not self:isSelectionOptionHidden("compendium_excerpt") then
+        table.insert(buttons, {
+            { text = _("Add selection to a compendium entry…"), callback = choose(function()
+                self:showAssignCompendiumExcerpt(trimmed, self:_selectionPage(selected))
+            end) },
+        })
+    end
+
     if #self.families > 0 and not self:isSelectionOptionHidden("family_excerpt") then
         table.insert(buttons, {
             { text = _("Add selection to a family or relationship…"), callback = choose(function()
@@ -16128,6 +16144,77 @@ function CharacterTracker:buildCharacterTreeSections(character)
     return sections
 end
 
+function CharacterTracker:_assignExcerptToOwner(text, page, owners, owner_label, owner_prompt, targets, on_saved)
+    if not owners or #owners == 0 then return end
+    local entry_text = "“" .. text .. "”"
+    if page and page ~= "" then entry_text = entry_text .. " (p. " .. page .. ")" end
+    local function pick_target(owner)
+        local choices = {}
+        for _i, target in ipairs(targets) do
+            table.insert(choices, { label = target.label, value = target.field })
+        end
+        self:_showChoice(T(_("Add the selection to which part of '%1'?"), owner.name or "?"), choices, function(field)
+            if field == "description" then
+                local current = trim(owner.description or "")
+                owner.description = current ~= "" and (current .. "\n" .. entry_text) or entry_text
+            else
+                if type(owner[field]) ~= "table" then owner[field] = {} end
+                table.insert(owner[field], entry_text)
+            end
+            on_saved()
+            UIManager:show(InfoMessage:new{ text = T(_("Added to '%1'."), owner.name or "?"), timeout = 2 })
+        end)
+    end
+    if #owners == 1 then
+        pick_target(owners[1])
+        return
+    end
+    local choices = {}
+    for i, owner in ipairs(owners) do
+        table.insert(choices, { label = shorten(owner_label(owner), 38), value = i })
+    end
+    self:_showChoice(owner_prompt, choices, function(index)
+        if owners[index] then pick_target(owners[index]) end
+    end)
+end
+
+function CharacterTracker:showAssignPlaceExcerpt(text, page)
+    if not self.places or #self.places == 0 then
+        UIManager:show(InfoMessage:new{ text = _("There are no places yet.") })
+        return
+    end
+    self:_assignExcerptToOwner(text, page, self.places,
+        function(place) return place.name or _("(unnamed)") end,
+        _("Add the selection to which place?"),
+        {
+            { field = "notes", label = _("Notes") },
+            { field = "history", label = _("History") },
+            { field = "features", label = _("Notable features") },
+            { field = "secrets", label = _("Secrets") },
+            { field = "description", label = _("Description") },
+        },
+        function() self:savePlaces() end)
+end
+
+function CharacterTracker:showAssignCompendiumExcerpt(text, page)
+    if not self.compendium or #self.compendium == 0 then
+        UIManager:show(InfoMessage:new{ text = _("There are no compendium entries yet.") })
+        return
+    end
+    self:_assignExcerptToOwner(text, page, self.compendium,
+        function(entry) return entry.name or _("(unnamed)") end,
+        _("Add the selection to which compendium entry?"),
+        {
+            { field = "notes", label = _("Notes") },
+            { field = "history", label = _("History") },
+            { field = "properties", label = _("Properties") },
+            { field = "limitations", label = _("Limitations") },
+            { field = "secrets", label = _("Secrets") },
+            { field = "description", label = _("Description") },
+        },
+        function() self:saveCompendium() end)
+end
+
 function CharacterTracker:showAssignFamilyExcerpt(text, page)
     if not self.families or #self.families == 0 then
         UIManager:show(InfoMessage:new{ text = _("There are no families or relationships yet.") })
@@ -20859,7 +20946,7 @@ local LAYOUT_BOOL_KEYS = {
     "character_tracker_hide_counts", "character_tracker_show_tree_branch_buttons",
 }
 for _i, kind in ipairs({ "character", "highlight", "topic", "place", "compendium",
-        "family", "appearance", "timeline", "family_excerpt" }) do
+        "family", "appearance", "timeline", "family_excerpt", "place_excerpt", "compendium_excerpt" }) do
     table.insert(LAYOUT_BOOL_KEYS, "character_tracker_hide_selection_" .. kind)
 end
 local LAYOUT_HIDDEN_KEYS = {
@@ -21723,6 +21810,8 @@ function CharacterTracker:addToMainMenu(menu_items)
         { kind = "highlight",  label = _("Hide add highlight to character (when selecting text)") },
         { kind = "topic",      label = _("Hide add topic highlight (when selecting text)") },
         { kind = "place",      label = _("Hide new place (when selecting text)") },
+        { kind = "place_excerpt", label = _("Hide add to place (when selecting text)") },
+        { kind = "compendium_excerpt", label = _("Hide add to compendium entry (when selecting text)") },
         { kind = "compendium", label = _("Hide new compendium entry (when selecting text)") },
         { kind = "family",     label = _("Hide new family (when selecting text)") },
         { kind = "appearance", label = _("Hide add to appearance (when selecting text)") },
